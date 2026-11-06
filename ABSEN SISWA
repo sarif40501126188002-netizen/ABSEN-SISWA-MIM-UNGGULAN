@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Informasi Absensi - MIM Unggulan Kota Gorontalo</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS for XLSX export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { primary: '#059669', secondary: '#10b981' } // Emerald green theme
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- MOCK DATA ---
+        const initialStudents = [
+            { id: 1, nama: 'Ahmad Fauzi', kelas: '1A' },
+            { id: 2, nama: 'Budi Santoso', kelas: '1A' },
+            { id: 3, nama: 'Siti Aminah', kelas: '2B' },
+            { id: 4, nama: 'Zahra Larasati', kelas: '3C' },
+        ];
+        const initialClasses = [
+            { id: 1, nama: '1A', jumlah: 32 },
+            { id: 2, nama: '2B', jumlah: 30 },
+            { id: 3, nama: '3C', jumlah: 28 },
+        ];
+        const initialJamBelajar = [
+            { id: 1, hari: 'Senin', masuk: '07:00', pulang: '14:00', izin: '1', status: 'Masuk Belajar' },
+            { id: 2, hari: 'Selasa', masuk: '07:00', pulang: '14:00', izin: '1', status: 'Masuk Belajar' },
+            { id: 3, hari: 'Rabu', masuk: '07:00', pulang: '14:00', izin: '1', status: 'Masuk Belajar' },
+            { id: 4, hari: 'Kamis', masuk: '07:00', pulang: '14:00', izin: '1', status: 'Masuk Belajar' },
+            { id: 5, hari: 'Jumat', masuk: '07:00', pulang: '11:30', izin: '1', status: 'Masuk Belajar' },
+            { id: 6, hari: 'Sabtu', masuk: '-', pulang: '-', izin: '0', status: 'Libur' },
+            { id: 7, hari: 'Minggu', masuk: '-', pulang: '-', izin: '0', status: 'Libur' },
+        ];
+        const initialAdmins = [
+            { id: 1, nama: 'Admin Utama', username: 'admin1', email: 'admin@mim.sch.id', jabatan: 'Kepala Tata Usaha' }
+        ];
+
+        // --- UTILITY FUNCTIONS ---
+        const exportToXLSX = (tableId, filename) => {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            // Menggunakan library XLSX (SheetJS) untuk mengeksport tabel HTML ke file .xlsx
+            const wb = XLSX.utils.table_to_book(table, { sheet: "Laporan Harian" });
+            XLSX.writeFile(wb, filename + ".xlsx");
+        };
+
+        const exportToExcel = (tableId, filename) => {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            let csv = [];
+            for (let i = 0; i < table.rows.length; i++) {
+                let row = [], cols = table.rows[i].querySelectorAll("td, th");
+                for (let j = 0; j < cols.length; j++) 
+                    row.push('"' + cols[j].innerText.replace(/"/g, '""') + '"');
+                csv.push(row.join(","));
+            }
+            const csvFile = new Blob([csv.join("\n")], {type: "text/csv"});
+            const downloadLink = document.createElement("a");
+            downloadLink.download = filename + ".csv";
+            downloadLink.href = window.URL.createObjectURL(csvFile);
+            downloadLink.style.display = "none";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        };
+
+        const exportToMarkdown = (tableId, filename) => {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            
+            let rows = [];
+            let colWidths = [];
+            
+            // Ekstrak data dan hitung lebar kolom maksimum untuk kerapian
+            for (let i = 0; i < table.rows.length; i++) {
+                let row = [];
+                let cols = table.rows[i].querySelectorAll("td, th");
+                for (let j = 0; j < cols.length; j++) {
+                    const text = cols[j].innerText.trim();
+                    row.push(text);
+                    if (!colWidths[j] || text.length > colWidths[j]) {
+                        colWidths[j] = Math.max(text.length, 3); // Minimal lebar 3
+                    }
+                }
+                rows.push(row);
+            }
+            
+            // Bangun string Markdown dengan padding spasi agar sejajar
+            let md = "";
+            rows.forEach((row, rowIndex) => {
+                let paddedRow = row.map((cell, colIndex) => cell.padEnd(colWidths[colIndex], ' '));
+                md += "| " + paddedRow.join(" | ") + " |\n";
+                
+                // Tambahkan garis pemisah header
+                if (rowIndex === 0) {
+                    let separator = colWidths.map(width => "-".repeat(width));
+                    md += "|-" + separator.join("-|-") + "-|\n";
+                }
+            });
+
+            const mdFile = new Blob([md], {type: "text/markdown"});
+            const downloadLink = document.createElement("a");
+            downloadLink.download = filename + ".md";
+            downloadLink.href = window.URL.createObjectURL(mdFile);
+            downloadLink.style.display = "none";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        };
+
+        // --- COMPONENTS ---
+
+        // 1. TOAST NOTIFICATION
+        const Toast = ({ message, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 3000);
+                return () => clearTimeout(timer);
+            }, [onClose]);
+            return (
+                <div className="fixed top-5 right-5 bg-primary text-white px-6 py-3 rounded shadow-lg z-50 flex items-center gap-4 transition-all animate-bounce">
+                    <span><i className="fas fa-check-circle mr-2"></i>{message}</span>
+                    <button onClick={onClose} className="text-white hover:text-gray-200"><i className="fas fa-times"></i></button>
+                </div>
+            );
+        };
+
+        // 2. DASHBOARD VIEW
+        const Dashboard = ({ setMenu }) => {
+            const cards = [
+                { title: 'Data Siswa', icon: 'fa-users', color: 'bg-blue-500', menu: 'data_siswa' },
+                { title: 'Data Kelas', icon: 'fa-school', color: 'bg-indigo-500', menu: 'data_kelas' },
+                { title: 'Data Jam Belajar', icon: 'fa-clock', color: 'bg-yellow-500', menu: 'jam_belajar' },
+                { title: 'Data Laporan', icon: 'fa-chart-bar', color: 'bg-primary', menu: 'laporan_absensi' },
+                { title: 'Pengaturan', icon: 'fa-cogs', color: 'bg-gray-600', menu: 'admin' },
+            ];
+
+            return (
+                <div>
+                    <h2 className="text-2xl font-bold mb-6 text-gray-800">Dashboard Utama</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {cards.map((card, idx) => (
+                            <div key={idx} className="bg-white rounded-lg shadow-sm overflow-hidden flex flex-col">
+                                <div className="p-5 flex justify-between items-center flex-1">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-gray-700">{card.title}</h3>
+                                        <p className="text-sm text-gray-500 mt-1">Kelola {card.title.toLowerCase()}</p>
+                                    </div>
+                                    <div className={`p-4 rounded-full ${card.color} text-white`}>
+                                        <i className={`fas ${card.icon} text-2xl`}></i>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => setMenu(card.menu)}
+                                    className="bg-gray-50 py-3 px-5 text-sm text-center text-gray-600 hover:bg-gray-100 hover:text-primary transition font-medium flex justify-center items-center gap-2 border-t"
+                                >
+                                    More Info {card.title.replace('Data ', '')} <i className="fas fa-arrow-circle-right"></i>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // 3. INPUT ABSEN VIEW
+        const InputAbsen = ({ students, attendanceList, showToast, addAttendance }) => {
+            const [currentTime, setCurrentTime] = useState(new Date());
+            const [selectedName, setSelectedName] = useState('');
+            const [selectedClass, setSelectedClass] = useState('');
+
+            useEffect(() => {
+                const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            const handleNameChange = (e) => {
+                const val = e.target.value;
+                setSelectedName(val);
+                const student = students.find(s => s.nama.toLowerCase() === val.toLowerCase());
+                if (student) setSelectedClass(student.kelas);
+                else setSelectedClass('');
+            };
+
+            const todayStr = currentTime.toLocaleDateString();
+            const existingRecord = attendanceList.find(a => a.nama.toLowerCase() === selectedName.toLowerCase() && a.tanggal === todayStr);
+
+            const handleAbsen = (status) => {
+                if (!selectedName || !selectedClass) {
+                    showToast('Harap lengkapi nama dan kelas!');
+                    return;
+                }
+
+                if (existingRecord) {
+                    showToast(`Maaf, ${selectedName} sudah melakukan absensi hari ini!`);
+                    return;
+                }
+
+                addAttendance({
+                    nama: selectedName,
+                    kelas: selectedClass,
+                    status: status,
+                    waktu: currentTime.toLocaleTimeString(),
+                    tanggal: todayStr,
+                    hari: currentTime.toLocaleDateString('id-ID', { weekday: 'long' })
+                });
+                setSelectedName('');
+                setSelectedClass('');
+                showToast(`Berhasil: ${selectedName} - ${status}`);
+            };
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6 max-w-2xl mx-auto mt-10">
+                    <div className="text-center mb-8">
+                        <h2 className="text-3xl font-bold text-gray-800"><i className="fas fa-fingerprint text-primary mr-2"></i> Input Absensi</h2>
+                        <div className="mt-4 inline-block bg-primary text-white px-6 py-2 rounded-full text-lg font-semibold shadow">
+                            {/* Target/Action Otomatis mengikuti format waktu */}
+                            {currentTime.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} <br/>
+                            {currentTime.toLocaleTimeString()}
+                        </div>
+                    </div>
+
+                    <div className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Cari Nama Siswa</label>
+                            <input 
+                                type="text" 
+                                list="student-list"
+                                value={selectedName}
+                                onChange={handleNameChange}
+                                className="w-full border border-gray-300 rounded-md px-4 py-3 focus:ring-primary focus:border-primary"
+                                placeholder="Ketik nama untuk mencari otomatis..."
+                            />
+                            <datalist id="student-list">
+                                {students.map(s => <option key={s.id} value={s.nama}>{s.kelas}</option>)}
+                            </datalist>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Kelas (Otomatis)</label>
+                            <input 
+                                type="text" 
+                                value={selectedClass}
+                                readOnly
+                                className="w-full border border-gray-300 rounded-md px-4 py-3 bg-gray-50 text-gray-600"
+                                placeholder="Kelas akan terisi otomatis"
+                            />
+                        </div>
+
+                        {existingRecord && (
+                            <div className="p-4 bg-blue-50 border border-blue-200 text-blue-800 rounded-md flex items-start gap-3 animate-pulse">
+                                <i className="fas fa-info-circle text-xl mt-0.5"></i>
+                                <div className="text-sm">
+                                    <p className="font-semibold mb-1">Keterangan: Data Terisi</p>
+                                    <p>Siswa atas nama <strong>{existingRecord.nama}</strong> sudah terinput <strong>{existingRecord.status}</strong> pada pukul <strong>{existingRecord.waktu}</strong> sesuai jam masuk hari ini.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="pt-4">
+                            <button 
+                                onClick={() => handleAbsen('Terlambat')} 
+                                disabled={!!existingRecord}
+                                className={`w-full py-3 rounded-lg font-medium shadow-sm transition flex items-center justify-center gap-2 ${existingRecord ? 'bg-gray-400 cursor-not-allowed text-white' : 'bg-yellow-500 hover:bg-yellow-600 text-white'}`}
+                            >
+                                <i className="fas fa-clock"></i> {existingRecord ? 'Sudah Terisi' : 'Terlambat'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 4. DATA SISWA (MASTER DATA)
+        const DataSiswa = ({ students, setStudents, classes, showToast }) => {
+            const [view, setView] = useState('table'); // table or add
+            const [search, setSearch] = useState('');
+            const [entries, setEntries] = useState(10);
+
+            // State untuk dropdown import & referensi file input
+            const [showImportMenu, setShowImportMenu] = useState(false);
+            const excelRef = React.useRef(null);
+            const wordRef = React.useRef(null);
+
+            // State untuk fitur Edit
+            const [editId, setEditId] = useState(null);
+            const [editForm, setEditForm] = useState({ nama: '', kelas: '' });
+
+            const filteredStudents = students.filter(s => s.nama.toLowerCase().includes(search.toLowerCase())).slice(0, entries);
+
+            const handleSimpanBaru = (e) => {
+                e.preventDefault();
+                const newStudent = { id: Date.now(), nama: e.target.nama.value, kelas: e.target.kelas.value };
+                setStudents([...students, newStudent]);
+                showToast("Data Siswa berhasil ditambahkan!");
+                setView('table');
+            };
+
+            const handleEditClick = (student) => {
+                setEditId(student.id);
+                setEditForm({ nama: student.nama, kelas: student.kelas });
+            };
+
+            const handleSaveEdit = (id) => {
+                setStudents(students.map(s => s.id === id ? { ...s, nama: editForm.nama, kelas: editForm.kelas } : s));
+                setEditId(null);
+                showToast("Data Siswa berhasil diperbarui!");
+            };
+
+            const handleDelete = (id) => {
+                setStudents(students.filter(s => s.id !== id));
+                showToast("Data Siswa berhasil dihapus!");
+            };
+
+            const handleFileUpload = (e, type) => {
+                if(e.target.files && e.target.files.length > 0) {
+                    showToast(`Data dari file ${type} (${e.target.files[0].name}) berhasil diproses!`);
+                    setShowImportMenu(false);
+                    e.target.value = null; // Reset input setelah dipilih
+                }
+            };
+
+            if (view === 'add') {
+                return (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                        <h2 className="text-xl font-bold mb-4 border-b pb-2">Tambah Siswa Baru</h2>
+                        <form onSubmit={handleSimpanBaru} className="space-y-4 max-w-lg">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nama Siswa</label>
+                                <input type="text" name="nama" required className="w-full border rounded-md px-3 py-2" placeholder="Masukkan nama..." />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Kelas</label>
+                                <select name="kelas" required className="w-full border rounded-md px-3 py-2">
+                                    <option value="">Pilih Kelas</option>
+                                    {classes.map(c => <option key={c.id} value={c.nama}>{c.nama}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Foto</label>
+                                <input type="file" accept="image/*" className="w-full border rounded-md px-3 py-2" />
+                            </div>
+                            <div className="flex gap-2 pt-4">
+                                <button type="submit" className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-emerald-700"><i className="fas fa-save mr-1"></i> Simpan</button>
+                                <button type="button" onClick={() => setView('table')} className="bg-gray-500 text-white px-4 py-2 rounded shadow hover:bg-gray-600"><i className="fas fa-times mr-1"></i> Batal</button>
+                            </div>
+                        </form>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-xl font-bold text-gray-800">Master Data Siswa</h2>
+                        <div className="flex gap-2">
+                            <button onClick={() => setView('add')} className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-emerald-700">
+                                <i className="fas fa-plus mr-1"></i> Tambah Baru
+                            </button>
+                            
+                            {/* Dropdown Import Excel / Word */}
+                            <div className="relative inline-block text-left">
+                                <button onClick={() => setShowImportMenu(!showImportMenu)} className="bg-indigo-500 text-white px-4 py-2 rounded shadow hover:bg-indigo-600 flex items-center">
+                                    <i className="fas fa-file-import mr-1"></i> Import <i className="fas fa-chevron-down ml-2 text-xs"></i>
+                                </button>
+                                
+                                {showImportMenu && (
+                                    <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-20">
+                                        <div className="py-1">
+                                            <button onClick={() => excelRef.current.click()} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                                                <i className="fas fa-file-excel text-green-600 mr-2"></i> Import dari Excel
+                                            </button>
+                                            <button onClick={() => wordRef.current.click()} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                                                <i className="fas fa-file-word text-blue-600 mr-2"></i> Import dari Word
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Hidden File Inputs */}
+                            <input type="file" ref={excelRef} accept=".xlsx, .xls, .csv" className="hidden" onChange={(e) => handleFileUpload(e, 'Excel')} />
+                            <input type="file" ref={wordRef} accept=".doc, .docx" className="hidden" onChange={(e) => handleFileUpload(e, 'Word')} />
+                        </div>
+                    </div>
+                    <div className="flex justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-600">Show</span>
+                            <select value={entries} onChange={(e) => setEntries(Number(e.target.value))} className="border rounded px-2 py-1 text-sm">
+                                <option value={5}>5</option>
+                                <option value={10}>10</option>
+                                <option value={25}>25</option>
+                            </select>
+                            <span className="text-sm text-gray-600">Entries</span>
+                        </div>
+                        <input 
+                            type="text" 
+                            placeholder="Search Nama..." 
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary text-sm" 
+                        />
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 border">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kelas</th>
+                                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {filteredStudents.map((s, i) => (
+                                    <tr key={s.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{i + 1}</td>
+                                        {editId === s.id ? (
+                                            <>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <input type="text" value={editForm.nama} onChange={(e) => setEditForm({...editForm, nama: e.target.value})} className="border rounded px-2 py-1 w-full" />
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <select value={editForm.kelas} onChange={(e) => setEditForm({...editForm, kelas: e.target.value})} className="border rounded px-2 py-1 w-full">
+                                                        {classes.map(c => <option key={c.id} value={c.nama}>{c.nama}</option>)}
+                                                    </select>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                                    <button onClick={() => handleSaveEdit(s.id)} className="text-green-600 hover:text-green-900 mx-2"><i className="fas fa-check"></i> Simpan</button>
+                                                    <button onClick={() => setEditId(null)} className="text-gray-600 hover:text-gray-900 mx-2"><i className="fas fa-times"></i> Batal</button>
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{s.nama}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.kelas}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                                    <button onClick={() => handleEditClick(s)} className="text-blue-600 hover:text-blue-900 mx-2"><i className="fas fa-edit"></i> Edit</button>
+                                                    <button onClick={() => handleDelete(s.id)} className="text-red-600 hover:text-red-900 mx-2"><i className="fas fa-trash"></i> Hapus</button>
+                                                </td>
+                                            </>
+                                        )}
+                                    </tr>
+                                ))}
+                                {filteredStudents.length === 0 && (
+                                    <tr><td colSpan="4" className="text-center py-4 text-gray-500">Data tidak ditemukan</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        // 5. DATA KELAS
+        const DataKelas = ({ classes, setClasses, showToast }) => {
+            const [view, setView] = useState('table');
+            const [editId, setEditId] = useState(null);
+            const [editForm, setEditForm] = useState({ nama: '', jumlah: '' });
+
+            const handleSimpanBaru = (e) => {
+                e.preventDefault();
+                const newClass = { id: Date.now(), nama: e.target.nama.value, jumlah: e.target.jumlah.value };
+                setClasses([...classes, newClass]);
+                showToast("Data Kelas berhasil ditambahkan!");
+                setView('table');
+            };
+
+            const handleEditClick = (c) => {
+                setEditId(c.id);
+                setEditForm({ nama: c.nama, jumlah: c.jumlah });
+            };
+
+            const handleSaveEdit = (id) => {
+                setClasses(classes.map(c => c.id === id ? { ...c, nama: editForm.nama, jumlah: editForm.jumlah } : c));
+                setEditId(null);
+                showToast("Data Kelas berhasil diperbarui!");
+            };
+
+            const handleDelete = (id) => {
+                setClasses(classes.filter(c => c.id !== id));
+                showToast("Data Kelas berhasil dihapus!");
+            };
+
+            if (view === 'add') {
+                return (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                        <h2 className="text-xl font-bold mb-4 border-b pb-2">Tambah Kelas Baru</h2>
+                        <form onSubmit={handleSimpanBaru} className="space-y-4 max-w-lg">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nama Kelas</label>
+                                <input type="text" name="nama" required className="w-full border rounded-md px-3 py-2" placeholder="Contoh: 1A" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Jumlah Siswa</label>
+                                <input type="number" name="jumlah" required className="w-full border rounded-md px-3 py-2" placeholder="Contoh: 30" />
+                            </div>
+                            <div className="flex gap-2 pt-4">
+                                <button type="submit" className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-emerald-700"><i className="fas fa-save mr-1"></i> Simpan</button>
+                                <button type="button" onClick={() => setView('table')} className="bg-gray-500 text-white px-4 py-2 rounded shadow hover:bg-gray-600"><i className="fas fa-times mr-1"></i> Batal</button>
+                            </div>
+                        </form>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-xl font-bold text-gray-800">Master Data Kelas</h2>
+                        <button onClick={() => setView('add')} className="bg-primary text-white px-4 py-2 rounded shadow hover:bg-emerald-700">
+                            <i className="fas fa-plus mr-1"></i> Tambah Baru
+                        </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 border">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama Kelas</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Jumlah Siswa</th>
+                                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {classes.map((c, i) => (
+                                    <tr key={c.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{i + 1}</td>
+                                        {editId === c.id ? (
+                                            <>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <input type="text" value={editForm.nama} onChange={(e) => setEditForm({...editForm, nama: e.target.value})} className="border rounded px-2 py-1 w-full" />
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <input type="number" value={editForm.jumlah} onChange={(e) => setEditForm({...editForm, jumlah: e.target.value})} className="border rounded px-2 py-1 w-full" />
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                                    <button onClick={() => handleSaveEdit(c.id)} className="text-green-600 hover:text-green-900 mx-2"><i className="fas fa-check"></i> Simpan</button>
+                                                    <button onClick={() => setEditId(null)} className="text-gray-600 hover:text-gray-900 mx-2"><i className="fas fa-times"></i> Batal</button>
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{c.nama}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{c.jumlah}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                                    <button onClick={() => handleEditClick(c)} className="text-blue-600 hover:text-blue-900 mx-2"><i className="fas fa-edit"></i> Edit</button>
+                                                    <button onClick={() => handleDelete(c.id)} className="text-red-600 hover:text-red-900 mx-2"><i className="fas fa-trash"></i> Hapus</button>
+                                                </td>
+                                            </>
+                                        )}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        // 6. DATA JAM BELAJAR
+        const DataJamBelajar = ({ jamBelajar, showToast }) => {
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-bold mb-6 text-gray-800">Data Jam Belajar</h2>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 border">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hari</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Masuk</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pulang</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Izin (Maks)</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {jamBelajar.map((j) => (
+                                    <tr key={j.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{j.hari}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{j.masuk}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{j.pulang}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{j.izin} Hari</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${j.status === 'Libur' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                                                {j.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                            <button onClick={() => showToast('Edit Settings')} className="text-blue-600 hover:text-blue-900"><i className="fas fa-edit"></i> Edit</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        // 7. LAPORAN ABSENSI
+        const LaporanAbsensi = ({ students, attendanceList, jamBelajar }) => {
+            const [selectedStudent, setSelectedStudent] = useState(null);
+
+            // Fungsi mendapatkan hari-hari dalam bulan ini (sampai hari ini berjalan)
+            const getDaysInCurrentMonthUpToToday = () => {
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = today.getMonth();
+                const date = today.getDate();
+                const days = [];
+                for (let i = 1; i <= date; i++) {
+                    const d = new Date(year, month, i);
+                    const dateStr = d.toLocaleDateString();
+                    const dayName = d.toLocaleDateString('id-ID', { weekday: 'long' });
+                    days.push({ dateStr, dayName });
+                }
+                return days;
+            };
+
+            const daysToReport = getDaysInCurrentMonthUpToToday();
+
+            // Hitung total hari efektif masuk untuk jumlah kehadiran
+            const calculateAbsen = (nama) => {
+                let hadirCount = 0;
+                daysToReport.forEach(dayInfo => {
+                    const jadwal = jamBelajar.find(j => j.hari.toLowerCase() === dayInfo.dayName.toLowerCase());
+                    if (jadwal && jadwal.status !== 'Libur') {
+                        hadirCount++;
+                    }
+                });
+                return hadirCount;
+            };
+
+            if (selectedStudent) {
+                const studentAttendance = attendanceList.filter(a => a.nama === selectedStudent.nama);
+                
+                // Mapping hari-hari, otomatis terisi jadwal belajar jika tidak ada record keterlambatan
+                const details = daysToReport.map((dayInfo, i) => {
+                    const jadwal = jamBelajar.find(j => j.hari.toLowerCase() === dayInfo.dayName.toLowerCase()) || { masuk: '-', pulang: '-', status: 'Libur' };
+                    const record = studentAttendance.find(a => a.tanggal === dayInfo.dateStr);
+
+                    let absenMasuk = '-';
+                    let absenPulang = '-';
+                    let status = jadwal.status;
+                    let terlambat = '-';
+
+                    if (jadwal.status !== 'Libur') {
+                        if (record && record.status === 'Terlambat') {
+                            absenMasuk = record.waktu; // Waktu kedatangan saat diinput terlambat
+                            absenPulang = jadwal.pulang; // Otomatis sesuai jam belajar
+                            terlambat = <i className="fas fa-check text-yellow-500"></i>;
+                            status = 'Terlambat';
+                        } else {
+                            absenMasuk = jadwal.masuk; // Otomatis sesuai jam belajar
+                            absenPulang = jadwal.pulang; // Otomatis sesuai jam belajar
+                            terlambat = '-';
+                            status = 'Tepat Waktu';
+                        }
+                    }
+
+                    return { no: i + 1, tanggal: dayInfo.dateStr, absenMasuk, terlambat, absenPulang, status };
+                });
+
+                return (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-xl font-bold text-gray-800">Detail Absensi: {selectedStudent.nama}</h2>
+                            <button onClick={() => setSelectedStudent(null)} className="bg-gray-500 text-white px-4 py-2 rounded shadow"><i className="fas fa-arrow-left mr-1"></i> Kembali</button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200 border">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">No</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tanggal</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Absen Masuk</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Terlambat</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Absen Pulang</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {details.map((d, i) => (
+                                        <tr key={i} className="border-b">
+                                            <td className="px-4 py-2 text-sm">{d.no}</td>
+                                            <td className="px-4 py-2 text-sm">{d.tanggal}</td>
+                                            <td className="px-4 py-2 text-sm text-center font-medium text-blue-600">{d.absenMasuk}</td>
+                                            <td className="px-4 py-2 text-sm text-center">{d.terlambat}</td>
+                                            <td className="px-4 py-2 text-sm text-center font-medium text-blue-600">{d.absenPulang}</td>
+                                            <td className="px-4 py-2 text-sm">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${d.status === 'Terlambat' ? 'bg-yellow-100 text-yellow-800' : d.status === 'Libur' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                                                    {d.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-2 text-sm"><button className="text-red-500"><i className="fas fa-trash"></i></button></td>
+                                        </tr>
+                                    ))}
+                                    {details.length === 0 && <tr><td colSpan="7" className="text-center py-4 text-gray-500">Belum ada data absensi</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-bold mb-6 text-gray-800">Laporan Absensi</h2>
+                    <div className="flex flex-wrap gap-4 mb-6 bg-gray-50 p-4 rounded border">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Pilih Bulan</label>
+                            <select className="border rounded px-3 py-1.5"><option>November</option><option>Desember</option></select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Pilih Tahun</label>
+                            <select className="border rounded px-3 py-1.5"><option>2026</option></select>
+                        </div>
+                        <div className="mt-5">
+                            <button onClick={() => exportToXLSX('tabel-laporan', 'Laporan_Absensi')} className="bg-green-600 text-white px-4 py-1.5 rounded shadow hover:bg-green-700 flex items-center gap-2"><i className="fas fa-file-excel"></i> Eksport Excel (.xlsx)</button>
+                        </div>
+                    </div>
+
+                    <table id="tabel-laporan" className="min-w-full divide-y divide-gray-200 border">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama Siswa</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kelas</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Jumlah Absen</th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {students.map((s, i) => (
+                                <tr key={s.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{i + 1}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{s.nama}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.kelas}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{calculateAbsen(s.nama)} Hari</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                        <button onClick={() => setSelectedStudent(s)} className="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition">Lihat Detail</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // 8. LAPORAN HARIAN
+        const LaporanHarian = ({ students, attendanceList, jamBelajar }) => {
+            const todayStr = new Date().toLocaleDateString();
+            const todayName = new Date().toLocaleDateString('id-ID', { weekday: 'long' });
+            
+            // Cek jadwal hari ini
+            const jadwal = jamBelajar.find(j => j.hari.toLowerCase() === todayName.toLowerCase()) || { masuk: '-', pulang: '-', status: 'Libur' };
+
+            // Mapping data siswa agar sinkron dengan input absen dan jam belajar
+            const dailyData = students.map((s, i) => {
+                const record = attendanceList.find(a => a.nama === s.nama && a.tanggal === todayStr);
+                let masuk = jadwal.masuk;
+                let terlambat = '-';
+
+                if (jadwal.status === 'Libur') {
+                    masuk = '-';
+                } else if (record && record.status === 'Terlambat') {
+                    terlambat = record.waktu; // Jam aktual mereka diinput terlambat
+                }
+
+                return { id: s.id, no: i + 1, nama: s.nama, kelas: s.kelas, tanggal: todayStr, masuk, terlambat };
+            });
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <h2 className="text-xl font-bold mb-6 text-gray-800">Laporan Harian</h2>
+                    <div className="flex flex-wrap gap-4 mb-6 bg-gray-50 p-4 rounded border items-end">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Pilih Siswa</label>
+                            <select className="border rounded px-3 py-1.5">
+                                <option>Semua Siswa</option>
+                                {students.map(s => <option key={s.id}>{s.nama}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Pilih Bulan</label>
+                            <select className="border rounded px-3 py-1.5"><option>November</option></select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">Pilih Tahun</label>
+                            <select className="border rounded px-3 py-1.5"><option>2026</option></select>
+                        </div>
+                        <div className="mt-5">
+                            <button onClick={() => exportToXLSX('tabel-harian', 'Laporan_Harian')} className="bg-green-600 text-white px-4 py-1.5 rounded shadow hover:bg-green-700 flex items-center gap-2"><i className="fas fa-file-excel"></i> Eksport Excel (.xlsx)</button>
+                        </div>
+                    </div>
+
+                    <table id="tabel-harian" className="min-w-full divide-y divide-gray-200 border">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama Siswa</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kelas</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bulan</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tanggal</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Masuk</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Terlambat</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {dailyData.map((d) => (
+                                <tr key={d.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{d.no}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{d.nama}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{d.kelas}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">November</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{d.tanggal}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">{d.masuk}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-yellow-600 font-medium">{d.terlambat}</td>
+                                </tr>
+                            ))}
+                            {dailyData.length === 0 && <tr><td colSpan="7" className="text-center py-4 text-gray-500">Data tidak ditemukan</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // 9. ADMIN PAGE
+        const AdminView = ({ admins, showToast }) => {
+            const [view, setView] = useState('table');
+
+            const handleSimpan = (e) => {
+                e.preventDefault();
+                showToast("Admin Baru disimpan!");
+                setView('table');
+            };
+
+            if (view === 'add') {
+                return (
+                    <div className="bg-white rounded-lg shadow-sm p-6">
+                        <h2 className="text-xl font-bold mb-4 border-b pb-2">Tambah Admin Baru</h2>
+                        <form onSubmit={handleSimpan} className="space-y-4 max-w-lg">
+                            <div><label className="block text-sm">Nama</label><input type="text" required className="w-full border rounded px-3 py-2" /></div>
+                            <div><label className="block text-sm">User Nama</label><input type="text" required className="w-full border rounded px-3 py-2" /></div>
+                            <div><label className="block text-sm">Email</label><input type="email" required className="w-full border rounded px-3 py-2" /></div>
+                            <div><label className="block text-sm">Jabatan</label><input type="text" required className="w-full border rounded px-3 py-2" /></div>
+                            <div className="flex gap-2 pt-4">
+                                <button type="submit" className="bg-primary text-white px-4 py-2 rounded shadow"><i className="fas fa-save mr-1"></i> Simpan</button>
+                                <button type="button" onClick={() => setView('table')} className="bg-gray-500 text-white px-4 py-2 rounded shadow"><i className="fas fa-times mr-1"></i> Batal</button>
+                            </div>
+                        </form>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-white rounded-lg shadow-sm p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-xl font-bold text-gray-800">Manajemen Admin</h2>
+                        <button onClick={() => setView('add')} className="bg-primary text-white px-4 py-2 rounded shadow"><i className="fas fa-plus mr-1"></i> Tambah Baru</button>
+                    </div>
+                    <div className="flex justify-between mb-4">
+                        <div className="flex items-center gap-2"><span>Show</span><select className="border rounded"><option>10</option></select><span>Entries</span></div>
+                        <input type="text" placeholder="Search..." className="border rounded px-3 py-1" />
+                    </div>
+                    <table className="min-w-full divide-y divide-gray-200 border">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User Nama</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Jabatan</th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {admins.map((a, i) => (
+                                <tr key={a.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{i + 1}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{a.nama}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{a.username}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{a.email}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{a.jabatan}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                        <button onClick={() => showToast('Edit')} className="text-blue-600 mx-2"><i className="fas fa-edit"></i> Edit</button>
+                                        <button onClick={() => showToast('Hapus')} className="text-red-600 mx-2"><i className="fas fa-trash"></i> Hapus</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [currentMenu, setCurrentMenu] = useState('dashboard');
+            const [toast, setToast] = useState(null);
+            
+            // Global State
+            const [students, setStudents] = useState(initialStudents);
+            const [classes, setClasses] = useState(initialClasses);
+            const [jamBelajar, setJamBelajar] = useState(initialJamBelajar);
+            const [admins, setAdmins] = useState(initialAdmins);
+            const [attendanceList, setAttendanceList] = useState([]);
+
+            const showToast = (msg) => setToast(msg);
+
+            const addAttendance = (record) => {
+                setAttendanceList([record, ...attendanceList]);
+            };
+
+            const menus = [
+                { id: 'dashboard', label: 'Dashboard', icon: 'fas fa-home' },
+                { id: 'input_absen', label: 'Input Absen', icon: 'fas fa-fingerprint' },
+                { label: 'MASTER DATA', isHeader: true },
+                { id: 'data_siswa', label: 'Data Siswa', icon: 'fas fa-user-graduate' },
+                { id: 'data_kelas', label: 'Data Kelas', icon: 'fas fa-school' },
+                { id: 'jam_belajar', label: 'Jam Belajar', icon: 'fas fa-clock' },
+                { label: 'LAPORAN', isHeader: true },
+                { id: 'laporan_absensi', label: 'Laporan Absensi', icon: 'fas fa-file-alt' },
+                { id: 'laporan_harian', label: 'Laporan Harian', icon: 'fas fa-calendar-day' },
+                { label: 'PENGATURAN', isHeader: true },
+                { id: 'admin', label: 'Admin', icon: 'fas fa-user-shield' }
+            ];
+
+            const renderContent = () => {
+                switch (currentMenu) {
+                    case 'dashboard': return <Dashboard setMenu={setCurrentMenu} />;
+                    case 'input_absen': return <InputAbsen students={students} attendanceList={attendanceList} showToast={showToast} addAttendance={addAttendance} />;
+                    case 'data_siswa': return <DataSiswa students={students} setStudents={setStudents} classes={classes} showToast={showToast} />;
+                    case 'data_kelas': return <DataKelas classes={classes} setClasses={setClasses} showToast={showToast} />;
+                    case 'jam_belajar': return <DataJamBelajar jamBelajar={jamBelajar} showToast={showToast} />;
+                    case 'laporan_absensi': return <LaporanAbsensi students={students} attendanceList={attendanceList} jamBelajar={jamBelajar} />;
+                    case 'laporan_harian': return <LaporanHarian students={students} attendanceList={attendanceList} jamBelajar={jamBelajar} />;
+                    case 'admin': return <AdminView admins={admins} showToast={showToast} />;
+                    default: return <Dashboard setMenu={setCurrentMenu} />;
+                }
+            };
+
+            return (
+                <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
+                    {/* Sidebar */}
+                    <aside className="w-64 bg-gray-900 text-white flex flex-col shadow-2xl z-10">
+                        <div className="p-4 bg-gray-950 flex items-center justify-center border-b border-gray-800">
+                            <div className="text-center">
+                                <div className="w-12 h-12 bg-primary rounded-full mx-auto mb-2 flex items-center justify-center">
+                                    <i className="fas fa-mosque text-xl"></i>
+                                </div>
+                                <h1 className="font-bold text-lg leading-tight tracking-wide">MIM Unggulan</h1>
+                                <p className="text-xs text-gray-400">Kota Gorontalo</p>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto py-4">
+                            <nav className="space-y-1">
+                                {menus.map((m, idx) => {
+                                    if (m.isHeader) {
+                                        return <div key={idx} className="px-6 mt-6 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">{m.label}</div>;
+                                    }
+                                    const active = currentMenu === m.id;
+                                    return (
+                                        <button
+                                            key={idx}
+                                            onClick={() => setCurrentMenu(m.id)}
+                                            className={`w-full flex items-center px-6 py-3 text-sm font-medium transition-colors ${active ? 'bg-primary text-white border-l-4 border-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white border-l-4 border-transparent'}`}
+                                        >
+                                            <i className={`${m.icon} w-6 text-center mr-3 text-lg ${active ? 'text-white' : 'text-gray-400'}`}></i>
+                                            {m.label}
+                                        </button>
+                                    )
+                                })}
+                            </nav>
+                        </div>
+                    </aside>
+
+                    {/* Main Content */}
+                    <div className="flex-1 flex flex-col overflow-hidden relative">
+                        {/* Header */}
+                        <header className="bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10">
+                            <div className="flex items-center text-xl font-semibold text-gray-800 capitalize">
+                                {currentMenu.replace('_', ' ')}
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <button className="text-gray-400 hover:text-gray-600"><i className="fas fa-bell"></i></button>
+                                <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-white font-bold">
+                                    A
+                                </div>
+                            </div>
+                        </header>
+
+                        {/* Page Content */}
+                        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
+                            {renderContent()}
+                        </main>
+                    </div>
+
+                    {/* Toast Notification Overlay */}
+                    {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
